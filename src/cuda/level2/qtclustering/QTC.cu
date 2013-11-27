@@ -30,6 +30,9 @@ using namespace std;
 #include "kernels_full_storage.h"
 #include "kernels_compact_storage.h"
 
+#define GETTIME_HAVE_INSTANCE
+#include "hgettime.h"
+
 // ****************************************************************************
 // Function: addBenchmarkSpecOptions
 //
@@ -250,6 +253,12 @@ void runTest(const string& name, ResultDatabase &resultDB, OptionParser& op)
             use_texture = false;
             use_compact_storage = true;
             break;
+        case 6:
+            point_count = 26*1024;
+            threshold   = 4;
+            use_texture = false;
+            use_compact_storage = true;
+            break;
         default:
             fprintf( stderr, "unsupported size %d given; terminating\n", def_size );
             return;
@@ -355,6 +364,13 @@ void QTC(const string& name, ResultDatabase &resultDB, OptionParser& op, int mat
         case 5:
             point_count    = 26*1024;
             threshold      = 1;
+            save_clusters  = false;
+            be_verbose     = false;
+            synthetic_data = true;
+            break;
+        case 6:
+            point_count    = 26*1024;
+            threshold      = 4;
             save_clusters  = false;
             be_verbose     = false;
             synthetic_data = true;
@@ -496,8 +512,10 @@ void QTC(const string& name, ResultDatabase &resultDB, OptionParser& op, int mat
     //
     // Kernel execution
 
+    gettime_set_startlocaltime();
     int TH = Timer::Start();
     do{
+        gettime_start("cpu");
         stringstream ss;
         int winner_node=-1;
         int winner_index=-1;
@@ -518,6 +536,8 @@ void QTC(const string& name, ResultDatabase &resultDB, OptionParser& op, int mat
 
         dim3 grid = grid2D(thread_block_count);
 
+        gettime_end();
+        gettime_start("main");
         int Tkernel = Timer::Start();
         ////////////////////////////////////////////////////////////////////////////////////////////////
         ///////// -----------------               Main kernel                ----------------- /////////
@@ -531,7 +551,9 @@ void QTC(const string& name, ResultDatabase &resultDB, OptionParser& op, int mat
         cudaThreadSynchronize();
         CHECK_CUDA_ERROR();
         t_krn += Timer::Stop(Tkernel, "Kernel Only");
+        gettime_end();
 
+        gettime_start("reduce");
         int Tredc = Timer::Start();
         if( thread_block_count > 1 ){
             // We are reducing 128 numbers or less, so one thread should be sufficient.
@@ -544,6 +566,8 @@ void QTC(const string& name, ResultDatabase &resultDB, OptionParser& op, int mat
         max_card     = cardinalities[0];
         winner_index = cardinalities[1];
         t_redc += Timer::Stop(Tredc, "Reduce Only");
+        gettime_end();
+        gettime_start("cpu");
 
         int Tsync = Timer::Start();
         comm_barrier();
@@ -557,6 +581,8 @@ void QTC(const string& name, ResultDatabase &resultDB, OptionParser& op, int mat
             cout << "[" << cwrank << "] Cluster Cardinality: " << max_card << " (Node: " << cwrank << ", index: " << winner_index << ")" << endl;
         }
 
+        gettime_end();
+        gettime_start("trim");
         int Ttrim = Timer::Start();
         trim_ungrouped_pnts_indr_array<<<grid2D(1), tpb>>>(winner_index, (int*)ungrpd_pnts_indr, (float*)distance_matrix,
                                           (int *)result, (char *)Ai_mask, (char *)clustered_pnts_mask,
@@ -565,6 +591,8 @@ void QTC(const string& name, ResultDatabase &resultDB, OptionParser& op, int mat
         cudaThreadSynchronize();
         CHECK_CUDA_ERROR();
         t_trim += Timer::Stop(Ttrim, "Trim Only");
+        gettime_end();
+        gettime_start("cpu");
 
         if( cwrank == winner_node){ // for non-parallel cases, these should both be zero.
             if( save_clusters ){
@@ -583,13 +611,18 @@ void QTC(const string& name, ResultDatabase &resultDB, OptionParser& op, int mat
             }
         }
  
+        gettime_end();
+        gettime_start("update");
         int Tupdt = Timer::Start();
         update_clustered_pnts_mask<<<grid2D(1), tpb>>>((char *)clustered_pnts_mask, (char *)Ai_mask, max_point_count);
         cudaThreadSynchronize();
         CHECK_CUDA_ERROR();
         t_updt += Timer::Stop(Tupdt, "Update Only");
+        gettime_end();
+        gettime_start("cpu");
 
         point_count -= max_card;
+        gettime_end();
 
     }while( max_card > 1 && point_count );
 
@@ -598,6 +631,7 @@ void QTC(const string& name, ResultDatabase &resultDB, OptionParser& op, int mat
     if( save_clusters ){
         seeds_out.close();
     }
+    gettime_set_endlocaltime();
     //
     ////////////////////////////////////////////////////////////////////////////////
     
@@ -605,6 +639,17 @@ void QTC(const string& name, ResultDatabase &resultDB, OptionParser& op, int mat
         cout << "Cluster count: " << iter << endl;
         cout.flush();
     }
+
+    cout << endl;
+    cout << "main : " << t_krn << "[s]" << endl;
+    cout << "reduce : " << t_redc << "[s]" << endl;
+    cout << "trim : " << t_trim << "[s]" << endl;
+    cout << "update : " << t_updt << "[s]" << endl;
+    cout << "sync : " << t_sync << "[s]" << endl;
+    cout << "comm : " << t_comm << "[s]" << endl;
+
+    gettime_dump();
+    cout << endl;
 
     resultDB.AddResult(name+"_Synchron.", sizeStr, "s", t_sync);
     resultDB.AddResult(name+"_Communic.", sizeStr, "s", t_comm);
