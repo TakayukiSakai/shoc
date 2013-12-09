@@ -255,6 +255,12 @@ void runTest(const string& name, ResultDatabase &resultDB, OptionParser& op)
             break;
         case 6:
             point_count = 26*1024;
+            threshold   = 2;
+            use_texture = false;
+            use_compact_storage = true;
+            break;
+        case 7:
+            point_count = 26*1024;
             threshold   = 4;
             use_texture = false;
             use_compact_storage = true;
@@ -369,6 +375,12 @@ void QTC(const string& name, ResultDatabase &resultDB, OptionParser& op, int mat
             synthetic_data = true;
             break;
         case 6:
+            point_count    = 26*1024;
+            threshold      = 2;
+            save_clusters  = false;
+            be_verbose     = false;
+            synthetic_data = true;
+        case 7:
             point_count    = 26*1024;
             threshold      = 4;
             save_clusters  = false;
@@ -512,6 +524,9 @@ void QTC(const string& name, ResultDatabase &resultDB, OptionParser& op, int mat
     //
     // Kernel execution
 
+    int array_max = 10000;
+    double *main_time;
+    main_time = new double[array_max];
     gettime_set_startlocaltime();
     int TH = Timer::Start();
     do{
@@ -537,6 +552,7 @@ void QTC(const string& name, ResultDatabase &resultDB, OptionParser& op, int mat
         dim3 grid = grid2D(thread_block_count);
 
         gettime_end();
+        show_localtime();
         gettime_start("main");
         int Tkernel = Timer::Start();
         ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -550,8 +566,12 @@ void QTC(const string& name, ResultDatabase &resultDB, OptionParser& op, int mat
         ////////////////////////////////////////////////////////////////////////////////////////////////
         cudaThreadSynchronize();
         CHECK_CUDA_ERROR();
-        t_krn += Timer::Stop(Tkernel, "Kernel Only");
+//        t_krn += Timer::Stop(Tkernel, "Kernel Only");
+        main_time[iter - 1] = Timer::Stop(Tkernel, "Kernel Only");
         gettime_end();
+        t_krn += main_time[iter - 1];
+
+        cout << "," << iter-1 << "," << main_time[iter-1] << endl;
 
         gettime_start("reduce");
         int Tredc = Timer::Start();
@@ -623,7 +643,6 @@ void QTC(const string& name, ResultDatabase &resultDB, OptionParser& op, int mat
 
         point_count -= max_card;
         gettime_end();
-
     }while( max_card > 1 && point_count );
 
     double t = Timer::Stop(TH, "QT_Clustering");
@@ -649,6 +668,15 @@ void QTC(const string& name, ResultDatabase &resultDB, OptionParser& op, int mat
     cout << "comm : " << t_comm << "[s]" << endl;
 
     gettime_dump();
+
+    /*
+    cout << endl;
+    for (int i = 0; i < iter; i++){
+      cout << i << " : " << main_time[i] << endl;
+    }
+    */
+    delete [] main_time;
+
     cout << endl;
 
     resultDB.AddResult(name+"_Synchron.", sizeStr, "s", t_sync);

@@ -186,4 +186,17 @@ static inline void gettime_add_time( int t, const char *name ) {
     p->time += t;
 }
 
+static inline void show_localtime(){
+  time_t rawtime;
+  struct tm * timeinfo;
+  time(&rawtime);
+  timeinfo = localtime(&rawtime);
+
+  printf("[%02d:%02d:%02d:%02d]",
+      timeinfo->tm_mday,
+      timeinfo->tm_hour,
+      timeinfo->tm_min,
+      timeinfo->tm_sec);
+}
+
 #endif
